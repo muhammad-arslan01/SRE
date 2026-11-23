@@ -13,14 +13,17 @@ No third-party dependencies — Python standard library only.
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
-WEB_DIR = Path(__file__).resolve().parent / "web"
+BASE_DIR = Path(__file__).resolve().parent
+WEB_DIR = BASE_DIR / "web"
+SSH_CONFIG = BASE_DIR / "ssh-nodes.json"
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8787
 
 
@@ -187,6 +190,177 @@ def build_snapshot():
 
 
 # ----------------------------------------------------------------------------
+# host-level usage over SSH  (processes + containers OUTSIDE kubernetes)
+# ----------------------------------------------------------------------------
+# One remote command emits delimited sections we parse below.
+_REMOTE_CMD = r'''
+echo "###LOAD"; uptime
+echo "###MEM"; free -m | awk 'NR==2{printf "%s %s %s\n",$2,$3,$4}'
+C=$(ps -eo pid,pcpu,pmem,rss,user,args --sort=-pcpu | sed -n '2,16p')
+R=$(ps -eo pid,pmem,pcpu,rss,user,args --sort=-pmem | sed -n '2,16p')
+echo "###CPU"; printf '%s\n' "$C"
+echo "###RAM"; printf '%s\n' "$R"
+PIDS=$( { printf '%s\n' "$C"; printf '%s\n' "$R"; } | awk '{print $1}' | sort -u | tr '\n' ' ')
+DCMD='for pid in '"$PIDS"'; do printf "%s|%s|%s|%s\n" "$pid" "$(readlink /proc/$pid/cwd 2>/dev/null)" "$(readlink /proc/$pid/exe 2>/dev/null)" "$(cat /proc/$pid/cgroup 2>/dev/null | tr "\n" ",")"; done'
+echo "###DETAIL"
+if sudo -n true 2>/dev/null; then sudo -n bash -c "$DCMD"; else bash -c "$DCMD"; fi
+echo "###CMAP"
+if command -v docker >/dev/null 2>&1; then
+  { timeout 6 docker ps --no-trunc --format '{{.ID}}|{{.Names}}|{{.Image}}' 2>/dev/null; timeout 6 sudo -n docker ps --no-trunc --format '{{.ID}}|{{.Names}}|{{.Image}}' 2>/dev/null; } | awk '!seen[$0]++' | head -80
+fi
+echo "###CONTAINERS"
+fmt='{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}'
+if command -v docker >/dev/null 2>&1; then
+  if timeout 6 docker ps >/dev/null 2>&1; then
+    timeout 7 docker stats --no-stream --format "$fmt" 2>/dev/null | head -n 30
+  elif timeout 6 sudo -n docker ps >/dev/null 2>&1; then
+    timeout 7 sudo -n docker stats --no-stream --format "$fmt" 2>/dev/null | head -n 30
+  fi
+fi
+echo "###END"
+'''
+
+
+def load_ssh_config():
+    try:
+        raw = json.loads(SSH_CONFIG.read_text())
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in raw.items() if isinstance(v, dict)}
+
+
+def _guess_project(cmd):
+    """Best-effort: the first absolute filesystem path in the command line."""
+    for tok in cmd.split()[1:]:
+        if tok.startswith("/") and "://" not in tok:
+            return tok
+    return ""
+
+
+def _proc(line, cpu_first, detail_map, cmap):
+    f = line.split(None, 5)
+    if len(f) < 6:
+        return None
+    pid = f[0]
+    a, b = float(f[1]), float(f[2])
+    cpu, mem = (a, b) if cpu_first else (b, a)
+    cmd = f[5]
+    short = cmd.split()[0].split("/")[-1] if cmd else ""
+    d = detail_map.get(pid, {})
+    cwd, exe, cid = d.get("cwd", ""), d.get("exe", ""), d.get("cid", "")
+    cont = cmap.get(cid, {}) if cid else {}
+    # "where the file lives" — prefer exe dir / cwd / a path in the command line
+    location = cwd or (exe.rsplit("/", 1)[0] if "/" in exe else "") or _guess_project(cmd)
+    return {"pid": pid, "cpu": cpu, "mem": mem, "rssMi": round(int(f[3]) / 1024, 1),
+            "user": f[4], "comm": short, "cmd": cmd,
+            "cwd": cwd, "exe": exe, "location": location,
+            "container": cont.get("name", ""), "image": cont.get("image", ""),
+            "project": cont.get("name") or location or _guess_project(cmd)}
+
+
+def parse_host_usage(out):
+    sect, buckets = None, {"LOAD": [], "MEM": [], "CPU": [], "RAM": [],
+                           "DETAIL": [], "CMAP": [], "CONTAINERS": []}
+    for line in out.splitlines():
+        if line.startswith("###"):
+            sect = line[3:].strip()
+            continue
+        if sect in buckets and line.strip():
+            buckets[sect].append(line)
+
+    # container id -> {name, image}
+    cmap = {}
+    for line in buckets["CMAP"]:
+        p = line.split("|")
+        if len(p) == 3:
+            cmap[p[0]] = {"name": p[1], "image": p[2]}
+
+    # pid -> {cwd, exe, cid}
+    detail_map = {}
+    for line in buckets["DETAIL"]:
+        p = line.split("|")
+        if len(p) >= 4:
+            cg = p[3]
+            m = re.search(r"docker[-/]([0-9a-f]{12,64})", cg)
+            cid = ""
+            if m:
+                full = m.group(1)
+                cid = next((k for k in cmap if k.startswith(full) or full.startswith(k)), full)
+            detail_map[p[0].strip()] = {"cwd": p[1].strip(), "exe": p[2].strip(), "cid": cid}
+
+    load = buckets["LOAD"][0] if buckets["LOAD"] else ""
+    m = re.search(r"load average[s]?:\s*([\d.]+)", load)
+    load1 = float(m.group(1)) if m else None
+
+    mem = {}
+    if buckets["MEM"]:
+        p = buckets["MEM"][0].split()
+        if len(p) == 3:
+            mem = {"total_mi": int(p[0]), "used_mi": int(p[1]), "free_mi": int(p[2])}
+
+    containers = []
+    for line in buckets["CONTAINERS"]:
+        parts = line.split("|")
+        if len(parts) == 3 and parts[0] not in ("", "--") and parts[1] != "--":
+            containers.append({"name": parts[0], "cpu": parts[1], "mem": parts[2]})
+
+    return {
+        "load1": load1,
+        "mem": mem,
+        "procsByCpu": [p for p in (_proc(l, True, detail_map, cmap) for l in buckets["CPU"]) if p],
+        "procsByMem": [p for p in (_proc(l, False, detail_map, cmap) for l in buckets["RAM"]) if p],
+        "containers": containers,
+    }
+
+
+def get_host_usage(name, cfg):
+    opts = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+            "-o", "StrictHostKeyChecking=accept-new"]
+
+    alias = cfg.get("alias")
+    if alias:
+        # Use an ~/.ssh/config Host alias — it carries host/port/user/key.
+        target = alias if isinstance(alias, str) and alias else name
+    else:
+        user = cfg.get("user", "")
+        host = cfg.get("host", "")
+        if not host or user in ("", "USER"):
+            return {"name": name, "ok": False,
+                    "error": "not configured — set an ssh-config alias, or user/host, in ssh-nodes.json"}
+        key = cfg.get("key")
+        if key:
+            opts += ["-i", os.path.expanduser(f"~/.ssh/{key}")]
+        port = cfg.get("port", 22)
+        if port and int(port) != 22:
+            opts += ["-p", str(port)]
+        target = f"{user}@{host}"
+    opts += [target, _REMOTE_CMD]
+
+    try:
+        res = subprocess.run(opts, capture_output=True, text=True, timeout=55)
+    except subprocess.TimeoutExpired:
+        return {"name": name, "ok": False, "error": "SSH timed out (unreachable? wrong port? remote command hung?)"}
+    if res.returncode != 0 or "###END" not in res.stdout:
+        err = (res.stderr or res.stdout or "ssh failed").strip().splitlines()
+        return {"name": name, "ok": False, "error": (err[-1] if err else "ssh failed")[:200]}
+
+    data = parse_host_usage(res.stdout)
+    data.update({"name": name, "ok": True})
+    return data
+
+
+def build_processes(node):
+    cfg = load_ssh_config()
+    names = [n for n in cfg if not n.startswith("_")]
+    if node and node != "all":
+        names = [node] if node in names else []
+    if not names:
+        return {"nodes": [], "configured": False,
+                "error": "No nodes configured. Edit ssh-nodes.json (set the SSH user/key)."}
+    return {"nodes": [get_host_usage(n, cfg[n]) for n in names], "configured": True}
+
+
+# ----------------------------------------------------------------------------
 # HTTP server
 # ----------------------------------------------------------------------------
 _CONTENT_TYPES = {
@@ -220,6 +394,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, build_snapshot())
             except Exception as e:  # never 500 silently
                 self._send(200, {"error": f"{type(e).__name__}: {e}"})
+            return
+
+        if path == "/api/processes":
+            node = (parse_qs(urlparse(self.path).query).get("node") or ["all"])[0]
+            try:
+                self._send(200, build_processes(node))
+            except Exception as e:
+                self._send(200, {"nodes": [], "error": f"{type(e).__name__}: {e}"})
             return
 
         # static files out of web/

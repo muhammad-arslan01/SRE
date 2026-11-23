@@ -157,6 +157,89 @@ function PodTable({ pods, sort, setSort }) {
   );
 }
 
+/* ---------- host usage (processes over SSH) ---------- */
+function ProcTable({ title, rows, metric }) {
+  return (
+    <div className="ptable">
+      <div className="pt-title">{title}</div>
+      <table className="ptab">
+        <tbody>
+          {(rows || []).map((p, i) => {
+            const v = metric === "cpu" ? p.cpu : p.mem;
+            return (
+              <tr key={i}>
+                <td className="pcell"><span className="minibar"><span className={`g-${sevClass(v)}`} style={{ width: `${clamp(v)}%` }} /></span></td>
+                <td className="num pval">{v.toFixed(1)}%</td>
+                <td className="pcomm">
+                  <div className="pshort">
+                    {p.comm} <span className="ppid">#{p.pid}</span>
+                    {p.container && <span className="pbadge" title={p.image ? `image: ${p.image}` : ""}>📦 {p.container}</span>}
+                  </div>
+                  <div className="ppath" title={`cmd: ${p.cmd}${p.exe ? "\nexe: " + p.exe : ""}${p.cwd ? "\ncwd: " + p.cwd : ""}`}>
+                    {p.location || p.cmd || "—"}
+                  </div>
+                </td>
+                <td className="num ns">{fmtMem(p.rssMi)}</td>
+                <td className="ns puser" title={p.user}>{p.user}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function HostNodeCard({ n }) {
+  if (!n.ok) {
+    return (
+      <div className="hostcard err">
+        <h3>{n.name}</h3>
+        <div className="na">⚠ {n.error}</div>
+      </div>
+    );
+  }
+  const mem = n.mem || {};
+  const memPct = mem.total_mi ? pct(mem.used_mi, mem.total_mi) : 0;
+  return (
+    <div className="hostcard">
+      <h3>{n.name}</h3>
+      <div className="sub">
+        load {n.load1 != null ? n.load1 : "—"} · RAM {fmtMem(mem.used_mi)} / {fmtMem(mem.total_mi)} ({memPct.toFixed(0)}%)
+      </div>
+      <div className="proccols">
+        <ProcTable title="Top processes by CPU" rows={n.procsByCpu} metric="cpu" />
+        <ProcTable title="Top processes by RAM" rows={n.procsByMem} metric="mem" />
+      </div>
+      {n.containers && n.containers.length > 0 && (
+        <div className="containers">
+          <div className="pt-title">Non-k8s containers (docker)</div>
+          {n.containers.map((c, i) => (
+            <div className="crow" key={i}>
+              <span className="cname">{c.name}</span>
+              <span className="t-warn">{c.cpu}</span>
+              <span className="ns">{c.mem}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HostView({ host, loading }) {
+  if (loading && !host) return <div className="empty"><span className="spin" /> scanning hosts over SSH…</div>;
+  if (!host) return <div className="empty">Pick a node and press Scan to read host processes.</div>;
+  if (host.error) return <div className="banner">⚠ {host.error}</div>;
+  if (!host.nodes || host.nodes.length === 0) return <div className="empty">No nodes configured — edit <b>ssh-nodes.json</b>.</div>;
+  return (
+    <div className="hostgrid">
+      {loading && <div className="meta" style={{ marginBottom: 8 }}><span className="spin" /> refreshing…</div>}
+      {host.nodes.map((n) => <HostNodeCard key={n.name} n={n} />)}
+    </div>
+  );
+}
+
 /* ---------- app ---------- */
 function App() {
   const [data, setData] = useState(null);
@@ -167,6 +250,23 @@ function App() {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState({ key: "memUse_mi", dir: -1 });
   const [auto, setAuto] = useState(true);
+  const [view, setView] = useState("pods");
+  const [host, setHost] = useState(null);
+  const [hostLoading, setHostLoading] = useState(false);
+
+  const loadHost = useCallback(async (n) => {
+    setHostLoading(true);
+    try {
+      const res = await fetch(`/api/processes?node=${encodeURIComponent(n)}`);
+      setHost(await res.json());
+    } catch (e) {
+      setHost({ nodes: [], error: String(e) });
+    } finally {
+      setHostLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { if (view === "host") loadHost(node); }, [view, node, loadHost]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -257,16 +357,30 @@ function App() {
             {data.nodes.map((n) => <NodeCard key={n.name} n={n} />)}
           </div>
 
-          <div className="section-title">Pods</div>
+          <div className="section-title">{view === "pods" ? "Pods" : "Host usage (all processes & containers)"}</div>
           <div className="controls">
-            <input placeholder="search namespace / pod…" value={q} onChange={(e) => setQ(e.target.value)} />
+            {view === "pods" && (
+              <input placeholder="search namespace / pod…" value={q} onChange={(e) => setQ(e.target.value)} />
+            )}
             <select value={node} onChange={(e) => setNode(e.target.value)}>
               <option value="all">all nodes</option>
               {data.nodes.map((n) => <option key={n.name} value={n.name}>{n.name}</option>)}
             </select>
-            <span className="count">{rows.length} pods</span>
+            <div className="viewtoggle">
+              <button className={view === "pods" ? "active" : ""} onClick={() => setView("pods")}>K8s pods</button>
+              <button className={view === "host" ? "active" : ""} onClick={() => setView("host")}>Host usage</button>
+            </div>
+            {view === "pods" ? (
+              <span className="count">{rows.length} pods</span>
+            ) : (
+              <button className="btn" onClick={() => loadHost(node)} disabled={hostLoading}>
+                {hostLoading ? <span className="spin" /> : "↻"} Scan
+              </button>
+            )}
           </div>
-          <PodTable pods={rows} sort={sort} setSort={setSort} />
+          {view === "pods"
+            ? <PodTable pods={rows} sort={sort} setSort={setSort} />
+            : <HostView host={host} loading={hostLoading} />}
         </>
       )}
     </div>

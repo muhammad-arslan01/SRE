@@ -125,6 +125,38 @@ tbody tr:hover { background: rgba(255,255,255,.025); }
 .t-warn { color: var(--warn); }
 .t-crit { color: var(--crit); }
 
+/* view toggle (pods / host usage) */
+.viewtoggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.viewtoggle button { background: transparent; color: var(--muted); border: none; padding: 8px 14px; font-size: 12.5px; cursor: pointer; transition: .12s; }
+.viewtoggle button:hover { color: var(--text); }
+.viewtoggle button.active { background: var(--accent); color: #04121f; font-weight: 650; }
+
+/* host usage view */
+.hostgrid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.hostcard { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow); }
+.hostcard.err { border-color: var(--warn); }
+.hostcard h3 { margin: 0 0 2px; font-size: 15px; }
+.hostcard .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+.proccols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+.pt-title { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 7px; font-weight: 600; }
+table.ptab { width: 100%; border-collapse: collapse; }
+table.ptab td { padding: 5px 6px; border-bottom: 1px solid var(--border); font-size: 12.5px; white-space: nowrap; }
+table.ptab tr:last-child td { border-bottom: none; }
+.ptab .pcell { width: 72px; }
+.ptab .pcell .minibar { width: 64px; }
+.ptab .pval { width: 48px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.ptab .pcomm { max-width: 360px; }
+.ptab .pshort { font-weight: 600; }
+.ptab .pshort .ppid { color: var(--muted); font-weight: 400; font-size: 11px; }
+.ptab .pbadge { display: inline-block; margin-left: 6px; font-size: 10.5px; font-weight: 500; color: var(--accent); background: rgba(74,168,255,.12); border: 1px solid rgba(74,168,255,.3); border-radius: 6px; padding: 1px 6px; vertical-align: 1px; }
+.ptab .ppath { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 360px; font-family: "Cascadia Code", Consolas, monospace; }
+.ptab .puser { width: 76px; max-width: 76px; overflow: hidden; text-overflow: ellipsis; }
+.containers { margin-top: 16px; }
+.crow { display: grid; grid-template-columns: 1fr auto auto; gap: 14px; padding: 5px 6px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.crow .cname { font-weight: 500; }
+
+@media (max-width: 760px) { .proccols { grid-template-columns: 1fr; gap: 14px; } }
+
 .banner { background: rgba(248,81,73,.1); border: 1px solid var(--crit); color: #ffb3ae; padding: 14px 16px; border-radius: 12px; margin-bottom: 18px; }
 .empty { padding: 40px; text-align: center; color: var(--muted); }
 .spin { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
