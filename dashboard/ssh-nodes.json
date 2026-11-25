@@ -3,5 +3,6 @@
   "meissasoft-server": { "alias": "meissasoft-server" },
   "db-cloud-staging":          { "alias": "db-cloud-staging" },
   "devserver":         { "alias": "devserver" },
-  "k3s-master-staging":        { "alias": "k3s-master-staging" }
+  "k3s-master-staging":        { "alias": "k3s-master-staging" },
+  "ubuntu-devs":        { "alias": "ubuntu-devs" }
 }
