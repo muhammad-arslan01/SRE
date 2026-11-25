@@ -4,5 +4,7 @@
   "db-cloud-staging":          { "alias": "db-cloud-staging" },
   "devserver":         { "alias": "devserver" },
   "k3s-master-staging":        { "alias": "k3s-master-staging" },
+  "ubuntu-devs":        { "alias": "ubuntu-devs" },
+  "ubuntu-devs":        { "alias": "ubuntu-devs" },
   "ubuntu-devs":        { "alias": "ubuntu-devs" }
 }
