@@ -1,7 +1,7 @@
 {
   "_comment": "Host-usage SSH targets. Preferred: add a Host block in ~/.ssh/config (like meissasoft-server) and set {\"alias\": \"<name>\"} here. Alternatively give user/host/key/port directly. A node with user='USER' and no alias is skipped as not-configured.",
   "meissasoft-server": { "alias": "meissasoft-server" },
-  "db-cloud":          { "alias": "db-cloud" },
+  "db-cloud-staging":          { "alias": "db-cloud-staging" },
   "devserver":         { "alias": "devserver" },
-  "k3s-master":        { "alias": "k3s-master" }
+  "k3s-master-staging":        { "alias": "k3s-master-staging" }
 }
