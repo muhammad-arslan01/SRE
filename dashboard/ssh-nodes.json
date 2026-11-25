@@ -5,6 +5,6 @@
   "devserver":         { "alias": "devserver" },
   "k3s-master-staging":        { "alias": "k3s-master-staging" },
   "ubuntu-devs":        { "alias": "ubuntu-devs" },
-  "ubuntu-devs":        { "alias": "ubuntu-devs" },
-  "ubuntu-devs":        { "alias": "ubuntu-devs" }
+  "ubuntu-devs-z":        { "alias": "ubuntu-devs-z" },
+  "ubuntu-devs-a":        { "alias": "ubuntu-devs-a" }
 }
