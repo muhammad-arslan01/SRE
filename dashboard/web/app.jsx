@@ -253,6 +253,7 @@ function App() {
   const [view, setView] = useState("pods");
   const [host, setHost] = useState(null);
   const [hostLoading, setHostLoading] = useState(false);
+  const [hostNode, setHostNode] = useState("");   // Host-usage targets one node by default
 
   const loadHost = useCallback(async (n) => {
     setHostLoading(true);
@@ -266,7 +267,14 @@ function App() {
     }
   }, []);
 
-  useEffect(() => { if (view === "host") loadHost(node); }, [view, node, loadHost]);
+  // On entering Host usage, default to the FIRST ssh node (single node = fast) then scan it.
+  useEffect(() => {
+    if (view !== "host" || !data) return;
+    const ssh = data.sshNodes || [];
+    const target = hostNode && (ssh.includes(hostNode) || hostNode === "all") ? hostNode : (ssh[0] || "all");
+    if (target !== hostNode) { setHostNode(target); return; }  // re-runs effect, then scans
+    loadHost(target);
+  }, [view, hostNode, data, loadHost]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -362,10 +370,17 @@ function App() {
             {view === "pods" && (
               <input placeholder="search namespace / pod…" value={q} onChange={(e) => setQ(e.target.value)} />
             )}
-            <select value={node} onChange={(e) => setNode(e.target.value)}>
-              <option value="all">all nodes</option>
-              {data.nodes.map((n) => <option key={n.name} value={n.name}>{n.name}</option>)}
-            </select>
+            {view === "pods" ? (
+              <select value={node} onChange={(e) => setNode(e.target.value)}>
+                <option value="all">all nodes</option>
+                {data.nodes.map((n) => <option key={n.name} value={n.name}>{n.name}</option>)}
+              </select>
+            ) : (
+              <select value={hostNode} onChange={(e) => setHostNode(e.target.value)}>
+                {(data.sshNodes || []).map((n) => <option key={n} value={n}>{n}</option>)}
+                <option value="all">all nodes (slow)</option>
+              </select>
+            )}
             <div className="viewtoggle">
               <button className={view === "pods" ? "active" : ""} onClick={() => setView("pods")}>K8s pods</button>
               <button className={view === "host" ? "active" : ""} onClick={() => setView("host")}>Host usage</button>
@@ -373,7 +388,7 @@ function App() {
             {view === "pods" ? (
               <span className="count">{rows.length} pods</span>
             ) : (
-              <button className="btn" onClick={() => loadHost(node)} disabled={hostLoading}>
+              <button className="btn" onClick={() => loadHost(hostNode)} disabled={hostLoading}>
                 {hostLoading ? <span className="spin" /> : "↻"} Scan
               </button>
             )}

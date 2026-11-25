@@ -186,7 +186,9 @@ def build_snapshot():
         "podCount": sum(n["podCount"] for n in node_list),
     }
 
-    return {"nodes": node_list, "pods": pods, "cluster": cluster, "metricsOk": metrics_ok}
+    ssh_nodes = [k for k in load_ssh_config() if not k.startswith("_")]
+    return {"nodes": node_list, "pods": pods, "cluster": cluster,
+            "metricsOk": metrics_ok, "sshNodes": ssh_nodes}
 
 
 # ----------------------------------------------------------------------------
